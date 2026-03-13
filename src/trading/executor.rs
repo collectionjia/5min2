@@ -422,20 +422,21 @@ impl TradingExecutor {
             illiquid_label, &pair_id[..8], illiquid_filled, step1_elapsed
         );
 
-        // ── Step 2: Build, sign, and send liquid side with GTD ──
+        // ── Step 2: Build, sign, and send liquid side with configurable order type ──
         let step2_start = Instant::now();
-        let expiration = Utc::now() + chrono::Duration::seconds(self.gtd_expiration_secs as i64);
-
-        let liquid_order = client
+        let mut builder = client
             .limit_order()
             .token_id(liquid_token)
             .side(Side::Buy)
             .price(liquid_price)
             .size(order_size)
-            .order_type(OrderType::GTD)
-            .expiration(expiration)
-            .build()
-            .await?;
+            .order_type(self.arbitrage_order_type.clone());
+        // Only set expiration when using GTD
+        if matches!(self.arbitrage_order_type, OrderType::GTD) {
+            let expiration = Utc::now() + chrono::Duration::seconds(self.gtd_expiration_secs as i64);
+            builder = builder.expiration(expiration);
+        }
+        let liquid_order = builder.build().await?;
 
         let signed_liquid = client.sign(&signer, liquid_order).await?;
 
@@ -445,8 +446,8 @@ impl TradingExecutor {
                 let step2_elapsed = step2_start.elapsed().as_millis();
                 let total_elapsed = total_start.elapsed().as_millis();
                 error!(
-                    "❌ 流动侧 GTD 下单失败 | {} | 单对:{} | 价格:{} | 数量:{} | 步骤2用时:{}ms | 总用时:{}ms | 错误:{}",
-                    liquid_label, &pair_id[..8], liquid_price, order_size, step2_elapsed, total_elapsed, e
+                    "❌ 流动侧 {:?} 下单失败 | {} | 单对:{} | 价格:{} | 数量:{} | 步骤2用时:{}ms | 总用时:{}ms | 错误:{}",
+                    self.arbitrage_order_type, liquid_label, &pair_id[..8], liquid_price, order_size, step2_elapsed, total_elapsed, e
                 );
                 // Illiquid side already filled — this is a one-sided fill, return it so risk manager can handle
                 let (yes_filled, no_filled) = if yes_is_illiquid {
