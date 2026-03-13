@@ -50,6 +50,8 @@ pub struct Config {
     pub stop_arbitrage_before_end_minutes: u64, // Stop arbitrage N minutes before market end, default 0 (no stop)
     /// Scheduled merge interval (minutes), 0 = disabled. CONDITION_ID is obtained from the current window market like the orderbook.
     pub merge_interval_minutes: u64,
+    /// Claim interval (minutes): auto redeem winnings after market ends; 0 = disabled
+    pub claim_interval_minutes: u64,
     /// YES price threshold: only execute arbitrage when YES price >= this value, default 0.0 (no limit)
     pub min_yes_price_threshold: f64,
     /// NO price threshold: only execute arbitrage when NO price >= this value, default 0.0 (no limit)
@@ -151,6 +153,10 @@ impl Config {
                 .unwrap_or_else(|_| "0".to_string())
                 .parse()
                 .unwrap_or(0), // 0 = disabled
+            claim_interval_minutes: env::var("CLAIM_INTERVAL_MINUTES")
+                .unwrap_or_else(|_| "2".to_string())
+                .parse()
+                .unwrap_or(2), // default 2 min
             min_yes_price_threshold: env::var("MIN_YES_PRICE_THRESHOLD")
                 .unwrap_or_else(|_| "0.0".to_string())
                 .parse()

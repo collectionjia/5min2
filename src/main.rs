@@ -83,6 +83,51 @@ fn merge_info_with_both_sides(positions: &[Position]) -> HashMap<B256, (U256, U2
         .collect()
 }
 
+fn condition_ids_with_any_side(positions: &[Position]) -> Vec<B256> {
+    let mut set = HashSet::new();
+    for p in positions {
+        if p.size > dec!(0) {
+            set.insert(p.condition_id);
+        }
+    }
+    set.into_iter().collect()
+}
+
+async fn run_claim_task(
+    interval_minutes: u64,
+    proxy: Address,
+    private_key: String,
+) {
+    let interval = Duration::from_secs(interval_minutes * 60);
+    tokio::time::sleep(Duration::from_secs(15)).await;
+    loop {
+        match get_positions().await {
+            Ok(positions) => {
+                for condition_id in condition_ids_with_any_side(&positions) {
+                    match merge::redeem_binary(condition_id, proxy, &private_key, None).await {
+                        Ok(tx) => {
+                            info!("✅ 自动领取成功 | condition_id={:#x}", condition_id);
+                            info!("  📝 tx={}", tx);
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if msg.contains("revert") || msg.contains("not resolved") || msg.contains("invalid") {
+                                debug!(condition_id = %condition_id, error = %e, "⏭️ 领取跳过");
+                            } else {
+                                warn!(condition_id = %condition_id, error = %e, "❌ 自动领取失败");
+                            }
+                        }
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "❌ 获取持仓失败，跳过本轮领取");
+            }
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
 /// Scheduled merge task: fetches **positions** every interval_minutes, serially executes merge_max only for markets with both YES+NO positions.
 /// Single-side positions are skipped; delays between merges and one retry on RPC rate limits. Deducts position_tracker positions and exposure after successful merge.
 /// Brief initial delay to avoid competing with orderbook stream startup on the same runtime.
@@ -419,6 +464,23 @@ async fn main() -> Result<()> {
         }
     } else {
         info!("Scheduled merge not enabled (MERGE_INTERVAL_MINUTES=0). To enable, set MERGE_INTERVAL_MINUTES to a positive number in .env, e.g. 5 or 15");
+    }
+
+    if config.claim_interval_minutes > 0 && !config.dry_run {
+        if let Some(proxy) = config.proxy_address {
+            let private_key = config.private_key.clone();
+            let interval = config.claim_interval_minutes;
+            tokio::spawn(async move {
+                run_claim_task(interval, proxy, private_key).await;
+            });
+            info!(
+                interval_minutes = config.claim_interval_minutes,
+                "已启动自动领取任务，每 {} 分钟执行一次",
+                config.claim_interval_minutes
+            );
+        } else {
+            warn!("CLAIM_INTERVAL_MINUTES>0 但未设置 POLYMARKET_PROXY_ADDRESS，自动领取未启动");
+        }
     }
 
     // Main loop enabled, start monitoring and trading

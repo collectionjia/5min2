@@ -126,6 +126,26 @@ fn encode_merge_calldata(req: &MergePositionsRequest) -> Vec<u8> {
     out
 }
 
+/// Encode redeemPositions for binary market: (collateralToken, parentCollectionId=0, conditionId, indexSets=[1,2])
+fn encode_redeem_calldata(collateral: Address, condition_id: B256) -> Vec<u8> {
+    let sel = &keccak256(b"redeemPositions(address,bytes32,bytes32,uint256[])")[..4];
+    let mut out = Vec::from(sel);
+    // collateralToken (address)
+    out.extend_from_slice(&[0u8; 12]);
+    out.extend_from_slice(collateral.as_slice());
+    // parentCollectionId (bytes32) = 0
+    out.extend_from_slice(B256::ZERO.as_slice());
+    // conditionId (bytes32)
+    out.extend_from_slice(condition_id.as_slice());
+    // indexSets offset (uint256) -> dynamic array starts at offset 0x80
+    out.extend_from_slice(&U256::from(128u64).to_be_bytes::<32>());
+    // indexSets length (uint256)
+    out.extend_from_slice(&U256::from(2u64).to_be_bytes::<32>());
+    // indexSets values (uint256[]), binary market uses 1 (YES) and 2 (NO)
+    out.extend_from_slice(&U256::from(1u64).to_be_bytes::<32>());
+    out.extend_from_slice(&U256::from(2u64).to_be_bytes::<32>());
+    out
+}
 fn derive_proxy_wallet(eoa: Address, proxy_factory: Address) -> Address {
     let salt = keccak256(eoa.as_slice());
     let mut buf = [0u8; 1 + 20 + 32 + 32];
@@ -426,5 +446,73 @@ pub async fn merge_max(
     let tx_hash_out = *pending.tx_hash();
     let _receipt = pending.get_receipt().await.map_err(|e| anyhow::anyhow!("waiting for receipt failed: {}", e))?;
     info!("✅ Merge succeeded (Safe) tx: {:#x}", tx_hash_out);
+    Ok(format!("{:#x}", tx_hash_out))
+}
+
+/// Redeem positions for a resolved binary market; calls redeemPositions with indexSets [1,2]
+pub async fn redeem_binary(
+    condition_id: B256,
+    proxy: Address,
+    private_key: &str,
+    rpc_url: Option<&str>,
+) -> Result<String> {
+    let rpc = rpc_url.unwrap_or(RPC_URL_DEFAULT);
+    let chain = POLYGON;
+    let signer = LocalSigner::from_str(private_key)?.with_chain_id(Some(chain));
+    let wallet = signer.address();
+
+    let provider = ProviderBuilder::new().wallet(signer.clone()).connect(rpc).await?;
+    let config = contract_config(chain, false).ok_or_else(|| anyhow::anyhow!("unsupported chain_id: {}", chain))?;
+    let ctf = config.conditional_tokens;
+
+    let redeem_calldata = encode_redeem_calldata(USDC_POLYGON, condition_id);
+    let code = provider.get_code_at(proxy).await.unwrap_or_default();
+
+    if code.len() < 150 {
+        let derived = derive_proxy_wallet(wallet, PROXY_FACTORY);
+        let try_anyway = env::var("MERGE_TRY_ANYWAY").map(|s| s.trim() == "1" || s.trim().eq_ignore_ascii_case("true")).unwrap_or(false);
+        if derived != proxy {
+            if !try_anyway {
+                anyhow::bail!(
+                    "POLYMARKET_PROXY_ADDRESS ({:?}) does not match ProxyFactory CREATE2 derivation ({:?}).\
+                     Use Polymarket web claim instead, or set MERGE_TRY_ANYWAY=1 to force attempt.",
+                    proxy, derived
+                );
+            }
+            warn!("MERGE_TRY_ANYWAY=1: derive != proxy, 仍尝试通过 Relayer 领取。");
+        }
+        let builder_key = env::var("POLY_BUILDER_API_KEY").ok();
+        let builder_secret = env::var("POLY_BUILDER_SECRET").ok();
+        let builder_passphrase = env::var("POLY_BUILDER_PASSPHRASE").ok();
+        let relayer_url = env::var("RELAYER_URL").unwrap_or_else(|_| RELAYER_URL_DEFAULT.to_string());
+        match (builder_key.as_deref(), builder_secret.as_deref(), builder_passphrase.as_deref()) {
+            (Some(k), Some(s), Some(p)) => {
+                let out = relayer_execute_merge(&redeem_calldata, ctf, proxy, &signer, k, s, p, &relayer_url).await?;
+                info!("✅ Relayer 提交领取交易: {}", out);
+                return Ok(out);
+            }
+            _ => anyhow::bail!(
+                "Magic/Email 领取需要 POLY_BUILDER_API_KEY, POLY_BUILDER_SECRET, POLY_BUILDER_PASSPHRASE；或使用网页领取。",
+            ),
+        }
+    }
+
+    let safe = IGnosisSafe::new(proxy, provider);
+    let nonce: U256 = safe.nonce().call().await.map_err(|e| anyhow::anyhow!("读取 Safe nonce 失败: {}", e))?;
+    let tx_hash_data = safe
+        .encodeTransactionData(ctf, U256::ZERO, redeem_calldata.clone().into(), 0u8, U256::ZERO, U256::ZERO, U256::ZERO, Address::ZERO, Address::ZERO, nonce)
+        .call().await.map_err(|e| anyhow::anyhow!("Safe.encodeTransactionData 失败: {}", e))?.0;
+    let tx_hash = keccak256(tx_hash_data.as_ref());
+    let sig = signer.sign_hash(&tx_hash).await.map_err(|e| anyhow::anyhow!("签名失败: {}", e))?;
+    let mut sig_bytes = sig.as_bytes().to_vec();
+    if sig_bytes.len() == 65 && (sig_bytes[64] == 0 || sig_bytes[64] == 1) {
+        sig_bytes[64] += 27;
+    }
+    let pending = safe
+        .execTransaction(ctf, U256::ZERO, redeem_calldata.into(), 0u8, U256::ZERO, U256::ZERO, U256::ZERO, Address::ZERO, Address::ZERO, sig_bytes.into())
+        .send().await.map_err(|e| anyhow::anyhow!("Safe.execTransaction 失败: {}", e))?;
+    let tx_hash_out = *pending.tx_hash();
+    let _receipt = pending.get_receipt().await.map_err(|e| anyhow::anyhow!("等待回执失败: {}", e))?;
+    info!("✅ 领取成功 (Safe) tx: {:#x}", tx_hash_out);
     Ok(format!("{:#x}", tx_hash_out))
 }
