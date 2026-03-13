@@ -99,11 +99,18 @@ async fn run_claim_task(
     private_key: String,
 ) {
     let interval = Duration::from_secs(interval_minutes * 60);
+    const DELAY_BETWEEN_CLAIMS: Duration = Duration::from_secs(12);
     tokio::time::sleep(Duration::from_secs(15)).await;
     loop {
         match get_positions().await {
             Ok(positions) => {
-                for condition_id in condition_ids_with_any_side(&positions) {
+                let ids = condition_ids_with_any_side(&positions);
+                if ids.is_empty() {
+                    debug!("🔄 本轮领取：无持仓需要处理");
+                } else {
+                    info!(count = ids.len(), "🔄 本轮领取：检测到 {} 个待领取条件", ids.len());
+                }
+                for (i, condition_id) in ids.iter().copied().enumerate() {
                     match merge::redeem_binary(condition_id, proxy, &private_key, None).await {
                         Ok(tx) => {
                             info!("✅ 自动领取成功 | condition_id={:#x}", condition_id);
@@ -119,6 +126,9 @@ async fn run_claim_task(
                         }
                     }
                     tokio::task::yield_now().await;
+                    if i + 1 < ids.len() {
+                        tokio::time::sleep(DELAY_BETWEEN_CLAIMS).await;
+                    }
                 }
             }
             Err(e) => {
