@@ -330,12 +330,12 @@ async fn main() -> Result<()> {
     info!("✅ All components initialized{}", if config.dry_run { " [DRY RUN]" } else { ", authentication verified" });
 
     // RPC health check components (endpoint probing, circuit breaker, metrics)
-    let rpc_cfg = rpc_check::CheckConfig::builder()
+    let rpc_cfg = poly_5min_bot::rpc_check::CheckConfig::builder()
         .timeout(Duration::from_secs(5))
         .build();
-    let _rpc_checker = rpc_check::RpcChecker::new(rpc_cfg);
-    let _rpc_circuit = rpc_check::CircuitBreaker::new();
-    let _rpc_metrics = rpc_check::Metrics::new();
+    let _rpc_checker = poly_5min_bot::rpc_check::RpcChecker::new(rpc_cfg);
+    let _rpc_circuit = poly_5min_bot::rpc_check::CircuitBreaker::new();
+    let _rpc_metrics = poly_5min_bot::rpc_check::Metrics::new();
     let _ = _rpc_checker.validate_endpoint("https://clob.polymarket.com");
     let _ = _rpc_checker.validate_endpoint("https://gamma-api.polymarket.com");
 
@@ -440,7 +440,7 @@ async fn main() -> Result<()> {
         }
 
         // RPC endpoint health check (batch probing before main loop)
-        let _ep_validator = rpc_check::EndpointValidator::new();
+        let _ep_validator = poly_5min_bot::rpc_check::EndpointValidator::new();
         let _ = _ep_validator.normalize("https://clob.polymarket.com");
         let _status = _rpc_checker.perform_health_check_sync("https://clob.polymarket.com");
         let _ = _rpc_circuit.status_allows_request(_status);
@@ -999,4 +999,3 @@ async fn main() -> Result<()> {
         info!("Current window monitoring ended, refreshing markets for next round");
     }
 }
-

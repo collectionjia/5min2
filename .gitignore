@@ -1,0 +1,14 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# Local env and logs
+.env
+bot.log
+
+# Release artifacts
+poly_5min_bot.zip
+poly_5min_bot_linux_x86_64.zip
+
+# Sensitive license file (do not publish)
+license.key
