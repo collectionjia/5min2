@@ -749,7 +749,7 @@ async fn main() -> Result<()> {
                                                     .unwrap_or(dec!(0.0));
                                                 if opp.yes_ask_price < min_yes_price_decimal {
                                                     info!(
-                                                        "⏸️ YES price below threshold, skipping arbitrage | market:{} | YES price:{:.4} | threshold:{:.4}",
+                                                        "⏸️ YES 价格低于阈值，跳过套利 | 市场:{} | YES 价格:{:.4} | 阈值:{:.4}",
                                                         market_display,
                                                         opp.yes_ask_price,
                                                         config.min_yes_price_threshold
@@ -765,7 +765,7 @@ async fn main() -> Result<()> {
                                                     .unwrap_or(dec!(0.0));
                                                 if opp.no_ask_price < min_no_price_decimal {
                                                     info!(
-                                                        "⏸️ NO price below threshold, skipping arbitrage | market:{} | NO price:{:.4} | threshold:{:.4}",
+                                                        "⏸️ NO 价格低于阈值，跳过套利 | 市场:{} | NO 价格:{:.4} | 阈值:{:.4}",
                                                         market_display,
                                                         opp.no_ask_price,
                                                         config.min_no_price_threshold
@@ -786,7 +786,7 @@ async fn main() -> Result<()> {
                                                     
                                                     if seconds_until_end <= threshold_seconds {
                                                         info!(
-                                                            "⏰ Approaching market end time, skipping arbitrage | market:{} | time until end:{}s | stop threshold:{} min",
+                                                            "⏰ 接近市场结束时间，跳过套利 | 市场:{} | 距结束:{}秒 | 停止阈值:{} 分钟",
                                                             market_display,
                                                             seconds_until_end,
                                                             config.stop_arbitrage_before_end_minutes
@@ -823,7 +823,7 @@ async fn main() -> Result<()> {
                                             // Check position balance (using local cache, zero latency)
                                             if position_balancer.should_skip_arbitrage(opp.yes_token_id, opp.no_token_id) {
                                                 warn!(
-                                                    "⚠️ Position severely imbalanced, skipping arbitrage | market:{}",
+                                                    "⚠️ 持仓严重不平衡，跳过套利 | 市场:{}",
                                                     market_display
                                                 );
                                                 continue; // Skip this arbitrage opportunity
@@ -832,7 +832,7 @@ async fn main() -> Result<()> {
                                             // Check if merge already happened this window — skip arbitrage to avoid re-buying
                                             if merged_this_window.load(Ordering::Relaxed) {
                                                 info!(
-                                                    "⏭️ Merge already completed this window, skipping arbitrage | market:{}",
+                                                    "⏭️ 本窗口已完成合并，跳过套利 | 市场:{}",
                                                     market_display
                                                 );
                                                 continue;
@@ -846,7 +846,7 @@ async fn main() -> Result<()> {
                                                     if now.saturating_duration_since(last) < MIN_TRADE_INTERVAL {
                                                         let elapsed = now.saturating_duration_since(last).as_secs_f32();
                                                         info!(
-                                                            "⏱️ Trade interval less than 3s, skipping | market:{} | since last:{}s",
+                                                            "⏱️ 两次交易间隔不足 3 秒，跳过 | 市场:{} | 距上次:{}秒",
                                                             market_display,
                                                             elapsed
                                                         );

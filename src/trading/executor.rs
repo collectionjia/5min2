@@ -46,7 +46,7 @@ impl TradingExecutor {
         dry_run: bool,
     ) -> Result<Self> {
         if dry_run {
-            info!("[DRY RUN] Trading executor started in simulation mode, no real trades will be executed");
+            info!("[模拟模式] 交易执行器已启动（不进行真实交易）");
             return Ok(Self {
                 client: None,
                 private_key,
@@ -107,7 +107,7 @@ impl TradingExecutor {
     /// Verify authentication succeeded - using api_keys() per official example
     pub async fn verify_authentication(&self) -> Result<()> {
         if self.dry_run {
-            info!("[DRY RUN] Skipping authentication verification");
+            info!("[模拟模式] 跳过鉴权验证");
             return Ok(());
         }
         // Per official example, use api_keys() to verify authentication status
@@ -119,7 +119,7 @@ impl TradingExecutor {
     /// Cancel all pending orders for this account (used during wind-down)
     pub async fn cancel_all_orders(&self) -> Result<()> {
         if self.dry_run {
-            info!("[DRY RUN] Simulating cancel all pending orders");
+            info!("[模拟模式] 模拟取消所有未完成订单");
             return Ok(());
         }
         self.client.as_ref().unwrap()
@@ -139,7 +139,7 @@ impl TradingExecutor {
     ) -> Result<()> {
         if self.dry_run {
             info!(
-                "[DRY RUN] Simulated sell | token_id={:#x} | price:{:.4} | size:{}",
+                "[模拟模式] 模拟卖出 | token_id={:#x} | 价格:{:.4} | 数量:{}",
                 token_id, price, size
             );
             return Ok(());
@@ -185,7 +185,7 @@ impl TradingExecutor {
     }
 
     /// Execute arbitrage trade: illiquid side first (FOK), then liquid side (GTD).
-    /// Illiquid = side with smaller available size. If FOK doesn't fill, skip trade (loss $0).
+    /// 不流动侧 = 可用数量更少的一侧。FOK 不成交则跳过（不产生损失）。
     /// yes_dir / no_dir: price direction "↑" "↓" "−" or "", used to assign slippage by direction (down=second, up/flat=first)
     pub async fn execute_arbitrage_pair(
         &self,
@@ -199,7 +199,7 @@ impl TradingExecutor {
         debug!(
             market_id = %opp.market_id,
             profit_pct = %opp.profit_percentage,
-            "starting arbitrage trade (illiquid FOK → liquid GTD)"
+            "开始套利交易（不流动侧 FOK → 流动侧 GTD）"
         );
 
         // Calculate actual order size (considering max order limit)
@@ -238,14 +238,14 @@ impl TradingExecutor {
 
         // Print level selection info (price with slippage)
         info!(
-            "📋 Level | YES {:.4}×{:.2} NO {:.4}×{:.2} | illiquid:{} (size:{})",
+            "📋 盘口 | YES {:.4}×{:.2} NO {:.4}×{:.2} | 不流动侧:{} (可用:{})",
             yes_price_with_slippage, order_size,
             no_price_with_slippage, order_size,
             illiquid_label, illiquid_size
         );
 
         info!(
-            "📤 Order | {} FOK {:.4}×{} → {} GTD {:.4}×{} | expiry:{}s",
+            "📤 下单 | {} FOK {:.4}×{} → {} GTD {:.4}×{} | 过期:{}秒",
             illiquid_label, illiquid_price, order_size,
             liquid_label, liquid_price, order_size,
             self.gtd_expiration_secs
@@ -256,7 +256,7 @@ impl TradingExecutor {
         let no_amount_usd = no_price_with_slippage * order_size;
         if yes_amount_usd <= dec!(1) || no_amount_usd <= dec!(1) {
             warn!(
-                "⏭️ Skipping order | YES amount:{:.2} USD NO amount:{:.2} USD | both sides must be > $1",
+                "⏭️ 跳过下单 | YES 金额:{:.2} USD NO 金额:{:.2} USD | 双边金额必须 > $1",
                 yes_amount_usd, no_amount_usd
             );
             return Err(anyhow::anyhow!(
@@ -268,7 +268,7 @@ impl TradingExecutor {
         // Dry run: simulate full fill, no actual orders
         if self.dry_run {
             info!(
-                "[DRY RUN] Simulated arbitrage | market:{} | illiquid:{} FOK {:.4} | liquid:{} GTD {:.4} | size:{}",
+                "[模拟模式] 模拟套利 | 市场:{} | 不流动侧:{} FOK {:.4} | 流动侧:{} GTD {:.4} | 数量:{}",
                 opp.market_id,
                 illiquid_label, illiquid_price,
                 liquid_label, liquid_price,
@@ -312,7 +312,7 @@ impl TradingExecutor {
             Err(e) => {
                 let elapsed = step1_start.elapsed().as_millis();
                 error!(
-                    "❌ Illiquid FOK order failed | {} | pair:{} | price:{} | size:{} | {}ms | error:{}",
+                    "❌ 不流动侧 FOK 下单失败 | {} | 单对:{} | 价格:{} | 数量:{} | 用时:{}ms | 错误:{}",
                     illiquid_label, &pair_id[..8], illiquid_price, order_size, elapsed, e
                 );
                 return Err(anyhow::anyhow!("illiquid FOK order API call failed: {}", e));
@@ -324,30 +324,96 @@ impl TradingExecutor {
         }
 
         let illiquid_result = &illiquid_results[0];
-        let illiquid_filled = illiquid_result.taking_amount;
+        let mut illiquid_filled = illiquid_result.taking_amount;
+        let mut illiquid_order_id_str = illiquid_result.order_id.clone();
         let step1_elapsed = step1_start.elapsed().as_millis();
 
         // If FOK didn't fill → skip trade entirely (loss $0)
         if illiquid_filled == dec!(0) {
             let error_msg = illiquid_result.error_msg.as_deref().unwrap_or("no fill");
             info!(
-                "⏭️ Illiquid side not filled, skipping trade | {} FOK | pair:{} | reason:{} | {}ms",
+                "⏭️ 不流动侧未成交 | {} FOK | 单对:{} | 原因:{} | 用时:{}ms | 尝试降级为 FAK",
                 illiquid_label, &pair_id[..8], error_msg, step1_elapsed
             );
-            return Ok(OrderPairResult {
-                pair_id,
-                yes_order_id: String::new(),
-                no_order_id: String::new(),
-                yes_filled: dec!(0),
-                no_filled: dec!(0),
-                yes_size: order_size,
-                no_size: order_size,
-                success: false,
-            });
+            // ── Fallback: try FAK for illiquid side (allow partial fill) ──
+            let fallback_start = Instant::now();
+            let illiquid_fak_order = client
+                .limit_order()
+                .token_id(illiquid_token)
+                .side(Side::Buy)
+                .price(illiquid_price)
+                .size(order_size)
+                .order_type(OrderType::FAK)
+                .build()
+                .await?;
+            let signed_illiquid_fak = client.sign(&signer, illiquid_fak_order).await?;
+            let illiquid_fak_results = match client.post_orders(vec![signed_illiquid_fak]).await {
+                Ok(results) => results,
+                Err(e) => {
+                    let fb_elapsed = fallback_start.elapsed().as_millis();
+                    info!(
+                        "⏭️ 不流动侧 FAK 尝试失败 | {} | 单对:{} | 用时:{}ms | 错误:{} | 交易跳过",
+                        illiquid_label, &pair_id[..8], fb_elapsed, e
+                    );
+                    return Ok(OrderPairResult {
+                        pair_id,
+                        yes_order_id: String::new(),
+                        no_order_id: String::new(),
+                        yes_filled: dec!(0),
+                        no_filled: dec!(0),
+                        yes_size: order_size,
+                        no_size: order_size,
+                        success: false,
+                    });
+                }
+            };
+            if illiquid_fak_results.is_empty() {
+                let fb_elapsed = fallback_start.elapsed().as_millis();
+                info!(
+                    "⏭️ 不流动侧 FAK 返回空结果 | {} | 单对:{} | 用时:{}ms | 交易跳过",
+                    illiquid_label, &pair_id[..8], fb_elapsed
+                );
+                return Ok(OrderPairResult {
+                    pair_id,
+                    yes_order_id: String::new(),
+                    no_order_id: String::new(),
+                    yes_filled: dec!(0),
+                    no_filled: dec!(0),
+                    yes_size: order_size,
+                    no_size: order_size,
+                    success: false,
+                });
+            }
+            let fallback_result = &illiquid_fak_results[0];
+            let fallback_filled = fallback_result.taking_amount;
+            let fb_elapsed = fallback_start.elapsed().as_millis();
+            if fallback_filled == dec!(0) {
+                info!(
+                    "⏭️ 不流动侧 FAK 未成交 | {} | 单对:{} | 用时:{}ms | 交易跳过",
+                    illiquid_label, &pair_id[..8], fb_elapsed
+                );
+                return Ok(OrderPairResult {
+                    pair_id,
+                    yes_order_id: String::new(),
+                    no_order_id: String::new(),
+                    yes_filled: dec!(0),
+                    no_filled: dec!(0),
+                    yes_size: order_size,
+                    no_size: order_size,
+                    success: false,
+                });
+            }
+            info!(
+                "✅ 不流动侧部分成交 | {} FAK | 单对:{} | 成交:{} 股 | 用时:{}ms",
+                illiquid_label, &pair_id[..8], fallback_filled, fb_elapsed
+            );
+            // Use fallback result as the illiquid fill and proceed to liquid step
+            illiquid_filled = fallback_filled;
+            illiquid_order_id_str = fallback_result.order_id.clone();
         }
 
         info!(
-            "✅ Illiquid side filled | {} FOK | pair:{} | filled:{} shares | {}ms",
+            "✅ 不流动侧成交 | {} FOK | 单对:{} | 成交:{} 股 | 用时:{}ms",
             illiquid_label, &pair_id[..8], illiquid_filled, step1_elapsed
         );
 
@@ -374,7 +440,7 @@ impl TradingExecutor {
                 let step2_elapsed = step2_start.elapsed().as_millis();
                 let total_elapsed = total_start.elapsed().as_millis();
                 error!(
-                    "❌ Liquid GTD order failed | {} | pair:{} | price:{} | size:{} | step2:{}ms | total:{}ms | error:{}",
+                    "❌ 流动侧 GTD 下单失败 | {} | 单对:{} | 价格:{} | 数量:{} | 步骤2用时:{}ms | 总用时:{}ms | 错误:{}",
                     liquid_label, &pair_id[..8], liquid_price, order_size, step2_elapsed, total_elapsed, e
                 );
                 // Illiquid side already filled — this is a one-sided fill, return it so risk manager can handle
@@ -384,7 +450,7 @@ impl TradingExecutor {
                     (dec!(0), illiquid_filled)
                 };
                 warn!(
-                    "⚠️ One-sided fill | {} | {} filled {} shares, {} order failed (forwarded to risk management)",
+                    "⚠️ 单侧成交 | {} | {} 成交 {} 股，{} 下单失败（已转交风险管理）",
                     &pair_id[..8], illiquid_label, illiquid_filled, liquid_label
                 );
                 return Ok(OrderPairResult {
@@ -407,7 +473,7 @@ impl TradingExecutor {
                 (dec!(0), illiquid_filled)
             };
             warn!(
-                "⚠️ One-sided fill | {} | {} filled {} shares, {} returned empty (forwarded to risk management)",
+                "⚠️ 单侧成交 | {} | {} 成交 {} 股，{} 返回空结果（已转交风险管理）",
                 &pair_id[..8], illiquid_label, illiquid_filled, liquid_label
             );
             return Ok(OrderPairResult {
@@ -428,7 +494,7 @@ impl TradingExecutor {
         let total_elapsed = total_start.elapsed().as_millis();
 
         info!(
-            "⏱️ Timing | {} | step1(FOK) {}ms step2(GTD) {}ms total {}ms",
+            "⏱️ 用时 | {} | 步骤1(FOK) {}ms 步骤2(GTD) {}ms 总计 {}ms",
             &pair_id[..8], step1_elapsed, step2_elapsed, total_elapsed
         );
 
@@ -439,15 +505,15 @@ impl TradingExecutor {
             (liquid_filled, illiquid_filled)
         };
         let (yes_order_id, no_order_id) = if yes_is_illiquid {
-            (illiquid_result.order_id.clone(), liquid_result.order_id.clone())
+            (illiquid_order_id_str.clone(), liquid_result.order_id.clone())
         } else {
-            (liquid_result.order_id.clone(), illiquid_result.order_id.clone())
+            (liquid_result.order_id.clone(), illiquid_order_id_str.clone())
         };
 
         // Print fill status
         if yes_filled > dec!(0) && no_filled > dec!(0) {
             info!(
-                "✅ Arbitrage trade succeeded | pair ID:{} | YES filled:{} shares | NO filled:{} shares | total filled:{} shares",
+                "✅ 套利成功 | 单对:{} | YES 成交:{} 股 | NO 成交:{} 股 | 总成交:{} 股",
                 &pair_id[..8],
                 yes_filled,
                 no_filled,
@@ -457,7 +523,7 @@ impl TradingExecutor {
             // Illiquid filled but liquid didn't — one-sided fill (rare with GTD, handled by risk manager)
             let unfilled_side = if yes_filled == dec!(0) { "YES" } else { "NO" };
             warn!(
-                "⚠️ One-sided fill | {} | {} unfilled (GTD pending, forwarded to risk management)",
+                "⚠️ 单侧成交 | {} | {} 未成交（GTD 挂单中，已转交风险管理）",
                 &pair_id[..8], unfilled_side
             );
         }
