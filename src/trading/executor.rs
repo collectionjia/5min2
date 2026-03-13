@@ -214,8 +214,13 @@ impl TradingExecutor {
         // Slippage by direction: up=first, down/flat=second
         let yes_slippage_apply = self.slippage_for_direction(yes_dir);
         let no_slippage_apply = self.slippage_for_direction(no_dir);
-        let yes_price_with_slippage = (opp.yes_ask_price + yes_slippage_apply).min(dec!(1.0));
-        let no_price_with_slippage = (opp.no_ask_price + no_slippage_apply).min(dec!(1.0));
+        // 规范化价格到最小跳动 0.01（两位小数），避免“Price has 3 decimal places”错误
+        let yes_price_with_slippage = (opp.yes_ask_price + yes_slippage_apply)
+            .min(dec!(1.0))
+            .round_dp(2);
+        let no_price_with_slippage = (opp.no_ask_price + no_slippage_apply)
+            .min(dec!(1.0))
+            .round_dp(2);
 
         // Determine illiquid side: smaller available size = less liquidity
         let yes_is_illiquid = opp.yes_size <= opp.no_size;
@@ -238,14 +243,14 @@ impl TradingExecutor {
 
         // Print level selection info (price with slippage)
         info!(
-            "📋 盘口 | YES {:.4}×{:.2} NO {:.4}×{:.2} | 不流动侧:{} (可用:{})",
+            "📋 盘口 | YES {:.2}×{:.2} NO {:.2}×{:.2} | 不流动侧:{} (可用:{})",
             yes_price_with_slippage, order_size,
             no_price_with_slippage, order_size,
             illiquid_label, illiquid_size
         );
 
         info!(
-            "📤 下单 | {} FOK {:.4}×{} → {} GTD {:.4}×{} | 过期:{}秒",
+            "📤 下单 | {} FOK {:.2}×{} → {} GTD {:.2}×{} | 过期:{}秒",
             illiquid_label, illiquid_price, order_size,
             liquid_label, liquid_price, order_size,
             self.gtd_expiration_secs

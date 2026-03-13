@@ -212,25 +212,25 @@ async fn main() -> Result<()> {
 
     if config.dry_run {
         info!("========================================");
-        info!("[DRY RUN] Simulation mode enabled");
-        info!("[DRY RUN] No real trades, orders, or blockchain operations will be executed");
+        info!("[模拟模式] 已开启模拟运行");
+        info!("[模拟模式] 不会执行真实交易、下单或链上操作");
         info!("========================================");
     } else {
         // Validate private key format
-        info!("Validating private key format...");
+        info!("正在校验私钥格式…");
         let _signer_test = LocalSigner::from_str(&config.private_key)
             .map_err(|e| anyhow::anyhow!("invalid private key format: {}", e))?;
-        info!("Private key format validated");
+        info!("私钥格式校验通过");
     }
 
     // Initialize trading executor (requires authentication)
-    info!("Initializing trading executor (requires API authentication)...");
+    info!("初始化交易执行器（需要 API 鉴权）…");
     if let Some(ref proxy) = config.proxy_address {
-        info!(proxy_address = %proxy, "Using Proxy signature type (Email/Magic or Browser Wallet)");
+        info!(proxy_address = %proxy, "使用代理签名类型（邮箱/Magic 或浏览器钱包）");
     } else {
-        info!("Using EOA signature type (direct trading)");
+        info!("使用 EOA 签名类型（直接交易）");
     }
-    info!("Note: 'Could not create api key' warnings are normal. The SDK first tries to create a new API key, and if that fails, it automatically uses a derived key. Authentication will still succeed.");
+    info!("提示：出现 “Could not create api key” 警告属正常。SDK 会先尝试创建新 API Key，如失败将自动使用派生 Key，鉴权仍可成功。");
     let executor = match TradingExecutor::new(
         config.private_key.clone(),
         config.max_order_size_usdc,
@@ -241,16 +241,16 @@ async fn main() -> Result<()> {
         config.dry_run,
     ).await {
         Ok(exec) => {
-            info!("Trading executor authenticated successfully (may have used derived API key)");
+            info!("交易执行器鉴权成功（可能使用了派生 API Key）");
             Arc::new(exec)
         }
         Err(e) => {
-            error!(error = %e, "Trading executor authentication failed! Cannot continue.");
-            error!("Please check:");
-            error!("  1. POLYMARKET_PRIVATE_KEY environment variable is correctly set");
-            error!("  2. Private key format is correct (should be a 64-character hex string without 0x prefix)");
-            error!("  3. Network connection is working");
-            error!("  4. Polymarket API service is available");
+            error!(error = %e, "交易执行器鉴权失败，无法继续");
+            error!("请检查：");
+            error!("  1. 是否正确设置 POLYMARKET_PRIVATE_KEY 环境变量");
+            error!("  2. 私钥格式是否正确（64位十六进制串且不带 0x）");
+            error!("  3. 网络连接是否正常");
+            error!("  4. Polymarket API 服务是否可用");
             return Err(anyhow::anyhow!("authentication failed, exiting: {}", e));
         }
     };
@@ -261,10 +261,10 @@ async fn main() -> Result<()> {
     use polymarket_client_sdk::clob::types::SignatureType;
 
     let clob_client = if config.dry_run {
-        info!("[DRY RUN] Skipping risk management client authentication");
+        info!("[模拟模式] 跳过风险管理客户端鉴权");
         None
     } else {
-        info!("Initializing risk management client (requires API authentication)...");
+        info!("初始化风险管理客户端（需要 API 鉴权）…");
         let signer_for_risk = LocalSigner::from_str(&config.private_key)?
             .with_chain_id(Some(POLYGON));
         let clob_config = ClobConfig::builder().use_server_time(true).build();
@@ -280,16 +280,16 @@ async fn main() -> Result<()> {
 
         match auth_builder_risk.authenticate().await {
             Ok(client) => {
-                info!("Risk management client authenticated successfully (may have used derived API key)");
+                info!("风险管理客户端鉴权成功（可能使用了派生 API Key）");
                 Some(client)
             }
             Err(e) => {
-                error!(error = %e, "Risk management client authentication failed! Cannot continue.");
-                error!("Please check:");
-                error!("  1. POLYMARKET_PRIVATE_KEY environment variable is correctly set");
-                error!("  2. Private key format is correct");
-                error!("  3. Network connection is working");
-                error!("  4. Polymarket API service is available");
+                error!(error = %e, "风险管理客户端鉴权失败，无法继续");
+                error!("请检查：");
+                error!("  1. 是否正确设置 POLYMARKET_PRIVATE_KEY 环境变量");
+                error!("  2. 私钥格式是否正确");
+                error!("  3. 网络连接是否正常");
+                error!("  4. Polymarket API 服务是否可用");
                 return Err(anyhow::anyhow!("authentication failed, exiting: {}", e));
             }
         }
@@ -309,25 +309,25 @@ async fn main() -> Result<()> {
 
     if !config.dry_run {
         // Verify authentication actually succeeded - try a simple API call
-        info!("Verifying authentication status (via API call test)...");
+        info!("正在验证鉴权状态（API 调用测试）…");
         match executor.verify_authentication().await {
             Ok(_) => {
-                info!("✅ Authentication verified, API calls working");
+                info!("✅ 鉴权验证通过，API 调用正常");
             }
             Err(e) => {
-                error!(error = %e, "❌ Authentication verification failed! authenticate() succeeded but API call failed.");
-                error!("This indicates authentication did not actually succeed, possibly because:");
-                error!("  1. API key creation failed (saw 'Could not create api key' warning)");
-                error!("  2. The account for this private key may not be registered on Polymarket");
-                error!("  3. The account may be restricted or suspended");
-                error!("  4. Network connection issues");
-                error!("Program will exit. Please resolve authentication issues before running again.");
+                error!(error = %e, "❌ 鉴权验证失败：authenticate() 成功但 API 调用失败");
+                error!("可能原因：");
+                error!("  1. API Key 创建失败（出现过 “Could not create api key” 警告）");
+                error!("  2. 私钥对应账号未在 Polymarket 注册");
+                error!("  3. 账号受限或被封禁");
+                error!("  4. 网络连接问题");
+                error!("程序将退出，请修复鉴权问题后重试");
                 return Err(anyhow::anyhow!("authentication verification failed: {}", e));
             }
         }
     }
 
-    info!("✅ All components initialized{}", if config.dry_run { " [DRY RUN]" } else { ", authentication verified" });
+    info!("✅ 组件初始化完成{}", if config.dry_run { " [模拟模式]" } else { ", 已验真鉴权" });
 
     // RPC health check components (endpoint probing, circuit breaker, metrics)
     let rpc_cfg = poly_5min_bot::rpc_check::CheckConfig::builder()
@@ -359,7 +359,7 @@ async fn main() -> Result<()> {
                         // Position info already printed in sync_from_api
                     }
                     Err(e) => {
-                        warn!(error = %e, "Position sync failed, will retry next cycle");
+                        warn!(error = %e, "持仓同步失败，将在下个周期重试");
                     }
                 }
                 sleep(interval).await;
