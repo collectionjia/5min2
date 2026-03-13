@@ -126,6 +126,7 @@ impl TradingExecutor {
             .cancel_all_orders()
             .await
             .map_err(|e| anyhow::anyhow!("failed to cancel all pending orders: {}", e))?;
+        info!("✅ 已取消所有未完成订单");
         Ok(())
     }
 
@@ -156,10 +157,21 @@ impl TradingExecutor {
             .build()
             .await?;
         let signed = client.sign(&signer, order).await?;
-        client
-            .post_order(signed)
-            .await
-            .map_err(|e| anyhow::anyhow!("sell order submission failed: {}", e))?;
+        match client.post_order(signed).await {
+            Ok(_) => {
+                info!(
+                    "✅ 卖单提交成功 | token_id={:#x} | price:{:.4} | size:{}",
+                    token_id, price, size
+                );
+            }
+            Err(e) => {
+                error!(
+                    "❌ 卖单提交失败 | token_id={:#x} | price:{:.4} | size:{} | error:{}",
+                    token_id, price, size, e
+                );
+                return Err(anyhow::anyhow!("sell order submission failed: {}", e));
+            }
+        }
         Ok(())
     }
 
