@@ -748,7 +748,7 @@ async fn main() -> Result<()> {
                                                 let min_yes_price_decimal = Decimal::try_from(config.min_yes_price_threshold)
                                                     .unwrap_or(dec!(0.0));
                                                 if opp.yes_ask_price < min_yes_price_decimal {
-                                                    debug!(
+                                                    info!(
                                                         "⏸️ YES price below threshold, skipping arbitrage | market:{} | YES price:{:.4} | threshold:{:.4}",
                                                         market_display,
                                                         opp.yes_ask_price,
@@ -764,7 +764,7 @@ async fn main() -> Result<()> {
                                                 let min_no_price_decimal = Decimal::try_from(config.min_no_price_threshold)
                                                     .unwrap_or(dec!(0.0));
                                                 if opp.no_ask_price < min_no_price_decimal {
-                                                    debug!(
+                                                    info!(
                                                         "⏸️ NO price below threshold, skipping arbitrage | market:{} | NO price:{:.4} | threshold:{:.4}",
                                                         market_display,
                                                         opp.no_ask_price,
@@ -785,7 +785,7 @@ async fn main() -> Result<()> {
                                                     let threshold_seconds = config.stop_arbitrage_before_end_minutes as i64 * 60;
                                                     
                                                     if seconds_until_end <= threshold_seconds {
-                                                        debug!(
+                                                        info!(
                                                             "⏰ Approaching market end time, skipping arbitrage | market:{} | time until end:{}s | stop threshold:{} min",
                                                             market_display,
                                                             seconds_until_end,
@@ -831,7 +831,7 @@ async fn main() -> Result<()> {
 
                                             // Check if merge already happened this window — skip arbitrage to avoid re-buying
                                             if merged_this_window.load(Ordering::Relaxed) {
-                                                debug!(
+                                                info!(
                                                     "⏭️ Merge already completed this window, skipping arbitrage | market:{}",
                                                     market_display
                                                 );
@@ -845,7 +845,7 @@ async fn main() -> Result<()> {
                                                 if let Some(last) = *guard {
                                                     if now.saturating_duration_since(last) < MIN_TRADE_INTERVAL {
                                                         let elapsed = now.saturating_duration_since(last).as_secs_f32();
-                                                        debug!(
+                                                        info!(
                                                             "⏱️ Trade interval less than 3s, skipping | market:{} | since last:{}s",
                                                             market_display,
                                                             elapsed
